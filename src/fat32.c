@@ -21,7 +21,6 @@ PRIVATE u32_t lookup_cluster(u32_t cluster)
     return 0;
 }
 
-
 /****************************************************************
  * Allocate and initialize a BIOS Parameter Block.
  */
@@ -135,11 +134,10 @@ PRIVATE fsinfo_t* init_fsinfo(bpb_t *bpb)
  */
 PRIVATE fat_t* init_fat(bpb_t *bpb)
 {
-    fat_t *fat = (fat_t*) malloc(sizeof(fat_t) * (bpb->tot_sec_32 / 2));
-
+    fat_t *fat = (fat_t*) calloc((bpb->tot_sec_32 / 2), sizeof(fat_t));
     if (!fat) error(FATAL, 0, "Could not allocate space for the FAT.\n");
 
-    memset(fat, FREE, sizeof(fat_t) * (bpb->tot_sec_32 / 2));
+    /* memset(fat, FREE, sizeof(fat_t) * (bpb->tot_sec_32 / 2)); */
 
     return fat;
 }
@@ -264,11 +262,11 @@ PRIVATE void write_rsvd(FILE *f, bpb_t *bpb)
 PRIVATE void write_fat(FILE *f, bpb_t *bpb, fat_t *fat)
 {
     /* Jump to the first non-reserved sector and write the FAT. */
-    fseek(f, bpb->rsvd_sec_cnt * bpb->bytes_per_sec, SEEK_SET);
-    fwrite(&fat, sizeof(u32_t), bpb->tot_sec_32 / 2, f);
+    /* fseek(f, bpb->rsvd_sec_cnt * bpb->bytes_per_sec, SEEK_SET); */
+    fwrite(fat, bpb->tot_sec_32 / 2, 1, f);
 
     /* Write the back-up copy of the FAT. */
-    fwrite(&fat, sizeof(u32_t), bpb->tot_sec_32 / 2, f);
+    fwrite(fat, bpb->tot_sec_32 / 2, 1, f);
 }
 
 
@@ -294,12 +292,16 @@ void create_fs(options_t *opt)
     write_rsvd(volume, bpb);
     write_fat(volume, bpb, fat);
 
-
     fclose(volume);
 
     free(bpb);
+    bpb = NULL;
     free(ebr);
+    ebr = NULL;
     free(fsinfo);
+    fsinfo = NULL;
     free(fat);
+    fat = NULL;
     free(vol);
+    vol = NULL;
 }
