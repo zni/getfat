@@ -1,10 +1,32 @@
+/****************************************************************
+ * Driver for getfat.
+ *
+ * Author: Matt Godshall <lifeinhex@gmail.com>
+ * Date  : 06-25-2012
+ *
+ * This file is part of getfat.
+ *
+ * getfat is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * getfat is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with getfat.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "fat32.h"
-#include "options.h"
+#include <fat32.h>
+#include <options.h>
 
 options_t* parse_args(int, char**);
 void display_help();
@@ -14,24 +36,39 @@ int main(int argc, char **argv)
 {
     options_t *args;
     args = parse_args(argc, argv);
+    if (!args) return 1;
 
-    if (args->create)
+    if (args->create && args->file_name)
         create_fs(args);
+    else if (args->read && args->file_name)
+        read_fs(args);
+    else
+        display_help();
+
+    free(args->file_name);
+    args->file_name = NULL;
+
+    free(args);
+    args = NULL;
 
     return 0;
 }
 
 
-/*
+/****************************************************************
  * Parse command line arguments.
  */
 options_t* parse_args(int argc, char **argv)
 {
     options_t *args = malloc(sizeof(options_t));
-    int i;
+    if (!args) return NULL;
 
+    args->device_size = 0;
+    args->file_name = NULL;
     args->create = 0;
+    args->read = 0;
     
+    int i;
     for (i = 1; i < argc; ++i) {
         char *str = argv[i];
         
@@ -47,7 +84,10 @@ options_t* parse_args(int argc, char **argv)
             display_help();
 
         } else if (!strncmp("c", str, 1)) {
-            args->create = 1;             
+            args->create = 1;
+
+        } else if (!strncmp("r", str, 1)) {
+            args->read = 1;
 
         /* TODO Exit if filename is not present. */
         } else if (!strncmp("f", str, 1)) {
@@ -65,7 +105,7 @@ options_t* parse_args(int argc, char **argv)
 }
 
 
-/*
+/****************************************************************
  * Display help message.
  */
 void display_help()

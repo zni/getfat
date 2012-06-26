@@ -8,6 +8,7 @@
 #include "types.h"
 
 void create_fs(options_t *);
+void read_fs(options_t *);
 
 typedef struct volume_ {
     u64_t fat_begin_lba;

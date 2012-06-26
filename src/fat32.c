@@ -1,16 +1,31 @@
-/*
+/****************************************************************
  * FAT32 driver for volume creation.
  *
  * Author : Matt Godshall
  * Date   : 2011 Nov 12 21:06:27
+ *
+ * This file is part of getfat.
+ *
+ * getfat is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * getfat is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with getfat.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "error.h"
-#include "fat32.h"
+#include <log.h>
+#include <fat32.h>
 
 
 /****************************************************************
@@ -115,7 +130,7 @@ PRIVATE fsinfo_t* init_fsinfo(bpb_t *bpb)
     fsinfo->sector_sig_2[2] = 'A';
     fsinfo->sector_sig_2[3] = 'a';
 
-    fsinfo->free_clusters = bpb->tot_sec_32 / 2;
+    fsinfo->free_clusters = 0xFFFFFFFF;
     fsinfo->rec_alloc_clus = 0;
 
     memset(fsinfo->reserved, 0, 12);
@@ -173,9 +188,17 @@ PRIVATE vol_t* init_vol(bpb_t *bpb, ebr_t *ebr)
  */
 PRIVATE void write_bpb(FILE *f, bpb_t *bpb)
 {
+    printf("write_bpb\n");
+    long int tell = 0;
+    tell = ftell(f);
+    printf("\tbefore seek: %ld\n", tell);
     fseek(f, 0, SEEK_SET);
-    fwrite(&(bpb->bs_jmp_boot), sizeof(u8_t), 3, f);
-    fwrite(&(bpb->bs_oem_name), sizeof(u8_t), 8, f);
+    tell = ftell(f);
+    printf("\tafter seek: %ld\n", tell);
+
+
+    fwrite(bpb->bs_jmp_boot, sizeof(u8_t), 3, f);
+    fwrite(bpb->bs_oem_name, sizeof(u8_t), 8, f);
     fwrite(&(bpb->bytes_per_sec), sizeof(u16_t), 1, f);
     fwrite(&(bpb->sectors_per_cluster), sizeof(u8_t), 1, f);
     fwrite(&(bpb->rsvd_sec_cnt), sizeof(u16_t), 1, f);
@@ -196,6 +219,14 @@ PRIVATE void write_bpb(FILE *f, bpb_t *bpb)
  */
 PRIVATE void write_ebr(FILE *f, ebr_t *ebr)
 {
+    printf("write_ebr\n");
+    long int tell = 0;
+    tell = ftell(f);
+    printf("\tbefore seek: %ld\n", tell);
+    fseek(f, 36, SEEK_SET);
+    tell = ftell(f);
+    printf("\tafter seek: %ld\n", tell);
+
     fseek(f, 36, SEEK_SET);
     fwrite(&(ebr->fat_sz_32), sizeof(u32_t), 1, f);
     fwrite(&(ebr->ext_flags), sizeof(u16_t), 1, f);
@@ -203,13 +234,13 @@ PRIVATE void write_ebr(FILE *f, ebr_t *ebr)
     fwrite(&(ebr->root_clus), sizeof(u32_t), 1, f);
     fwrite(&(ebr->fs_info), sizeof(u16_t), 1, f);
     fwrite(&(ebr->bk_boot_sec), sizeof(u16_t), 1, f);
-    fwrite(&(ebr->reserved), sizeof(u8_t), 12, f);
+    fwrite(ebr->reserved, sizeof(u8_t), 12, f);
     fwrite(&(ebr->drv_num), sizeof(u8_t), 1, f);
     fwrite(&(ebr->reserved1), sizeof(u8_t), 1, f);
     fwrite(&(ebr->boot_sig), sizeof(u8_t), 1, f);
     fwrite(&(ebr->vol_id), sizeof(u32_t), 1, f);
-    fwrite(&(ebr->vol_lab), sizeof(u8_t), 11, f);
-    fwrite(&(ebr->fil_sys_type), sizeof(u8_t), 8, f);
+    fwrite(ebr->vol_lab, sizeof(u8_t), 11, f);
+    fwrite(ebr->fil_sys_type, sizeof(u8_t), 8, f);
 
     /* End of sector signature. */
     fseek(f, 510, SEEK_SET);
@@ -218,24 +249,39 @@ PRIVATE void write_ebr(FILE *f, ebr_t *ebr)
 }
 
 
+u32_t read_sector_sig(FILE *f)
+{
+    u32_t sector_sig = 0;
+    fseek(f, 508, SEEK_SET);
+    fread(&sector_sig, sizeof(u32_t), 1, f);
+    return sector_sig;
+}
+
+
 /****************************************************************
  * Write the FSInfo sector to the volume.
  */
 PRIVATE void write_fsinfo(FILE *f, fsinfo_t *fsinfo)
 {
-
+    printf("write_fsinfo\n");
+    long int tell = 0;
+    tell = ftell(f);
+    printf("\tbefore seek: %ld\n", tell);
     fseek(f, 512, SEEK_SET);
-    fwrite(&(fsinfo->sector_sig), sizeof(u8_t), 4, f);
+    tell = ftell(f);
+    printf("\tafter seek: %ld\n", tell);
+
+    fwrite(fsinfo->sector_sig, sizeof(u8_t), 4, f);
 
     int i;
     for (i = 0; i < 480; ++i)
         fputc(0x00, f); 
 
-    fwrite(&(fsinfo->sector_sig_2), sizeof(u8_t), 4, f);
+    fwrite(fsinfo->sector_sig_2, sizeof(u8_t), 4, f);
     fwrite(&(fsinfo->free_clusters), sizeof(u32_t), 1, f);
     fwrite(&(fsinfo->rec_alloc_clus), sizeof(u32_t), 1, f);
-    fwrite(&(fsinfo->reserved), sizeof(u8_t), 12, f);
-    fwrite(&(fsinfo->sector_sig_3), sizeof(u8_t), 4, f);
+    fwrite(fsinfo->reserved, sizeof(u8_t), 12, f);
+    fwrite(fsinfo->sector_sig_3, sizeof(u8_t), 4, f);
 }
 
 
@@ -262,7 +308,7 @@ PRIVATE void write_rsvd(FILE *f, bpb_t *bpb)
 PRIVATE void write_fat(FILE *f, bpb_t *bpb, fat_t *fat)
 {
     /* Jump to the first non-reserved sector and write the FAT. */
-    /* fseek(f, bpb->rsvd_sec_cnt * bpb->bytes_per_sec, SEEK_SET); */
+    fseek(f, bpb->rsvd_sec_cnt * bpb->bytes_per_sec, SEEK_SET);
     fwrite(fat, bpb->tot_sec_32 / 2, 1, f);
 
     /* Write the back-up copy of the FAT. */
@@ -281,7 +327,7 @@ void create_fs(options_t *opt)
     fat_t *fat       = init_fat(bpb);
     vol_t *vol       = init_vol(bpb, ebr);
 
-    FILE *volume = fopen(opt->file_name, "ab");
+    FILE *volume = fopen(opt->file_name, "w+");
 
     if (!volume)
         error(FATAL, 0, "An error occured opening the volume for writing.\n");
@@ -291,6 +337,7 @@ void create_fs(options_t *opt)
     write_fsinfo(volume, fsinfo);
     write_rsvd(volume, bpb);
     write_fat(volume, bpb, fat);
+
 
     fclose(volume);
 
@@ -304,4 +351,24 @@ void create_fs(options_t *opt)
     fat = NULL;
     free(vol);
     vol = NULL;
+}
+
+
+/****************************************************************
+ * Read information (BPB, EBR, FS INFO, FAT) from a FAT32 volume.
+ *
+ * XXX Debugging function.
+ */
+void read_fs(options_t *opt)
+{
+    FILE *volume = fopen(opt->file_name, "r+");
+    printf("read_fs\n");
+    printf("\tboot signature: %08x\n", read_sector_sig(volume));
+
+    /*
+    bpb_t *bpb = read_bpb(volume);
+    ebr_t *ebr = read_ebr(volume);
+    fsinfo_t *fsinfo = read_fsinfo(volume);
+    fat_t *fat = read_fat(volume);
+    */
 }
