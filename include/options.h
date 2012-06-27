@@ -5,6 +5,7 @@
 
 typedef struct _options {
     u32_t  device_size;
+    u32_t  sector_size;
      i8_t* file_name;
      u8_t  create;
      u8_t  read;

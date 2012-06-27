@@ -64,6 +64,7 @@ options_t* parse_args(int argc, char **argv)
     if (!args) return NULL;
 
     args->device_size = 0;
+    args->sector_size = 512;
     args->file_name = NULL;
     args->create = 0;
     args->read = 0;
@@ -88,6 +89,10 @@ options_t* parse_args(int argc, char **argv)
 
         } else if (!strncmp("r", str, 1)) {
             args->read = 1;
+
+        } else if (!strncmp("ss", str, 2)) {
+            str += 2;
+            args->sector_size = atoi(str);
 
         /* TODO Exit if filename is not present. */
         } else if (!strncmp("f", str, 1)) {

@@ -45,21 +45,21 @@ PRIVATE bpb_t* init_bpb(options_t *opt)
 
     if (!bpb) error(FATAL, 0, "Could not allocate space for BPB.\n");
 
-    bpb->bs_jmp_boot[0] = 0x6B;
-    bpb->bs_jmp_boot[1] = 0x3C;
+    bpb->bs_jmp_boot[0] = 0xEB;
+    bpb->bs_jmp_boot[1] = 0x00;
     bpb->bs_jmp_boot[2] = 0x90;
 
-    bpb->bs_oem_name[0] = 'M';
-    bpb->bs_oem_name[1] = 'S';
-    bpb->bs_oem_name[2] = 'W';
-    bpb->bs_oem_name[3] = 'I';
-    bpb->bs_oem_name[4] = 'N';
-    bpb->bs_oem_name[5] = '4';
-    bpb->bs_oem_name[6] = '.';
-    bpb->bs_oem_name[7] = '1';
+    bpb->bs_oem_name[0] = 'G';
+    bpb->bs_oem_name[1] = 'E';
+    bpb->bs_oem_name[2] = 'T';
+    bpb->bs_oem_name[3] = 'F';
+    bpb->bs_oem_name[4] = 'A';
+    bpb->bs_oem_name[5] = 'T';
+    bpb->bs_oem_name[6] = ' ';
+    bpb->bs_oem_name[7] = ' ';
 
     // Variable
-    bpb->bytes_per_sec       = 512;
+    bpb->bytes_per_sec       = opt->sector_size;
     bpb->sectors_per_cluster = 2;
 
     // Mostly fixed.
@@ -73,10 +73,8 @@ PRIVATE bpb_t* init_bpb(options_t *opt)
     bpb->num_heads    = 0;
     bpb->hidd_sec     = 0;
 
-    // 2 * bytes_per_sec = 1024 = 1KB
-    // 1KB * 1024               = 1MB
-    // device_size is in megabytes.
-    bpb->tot_sec_32   = opt->device_size * ((bpb->bytes_per_sec * 2) * 2);
+    // Convert device size to bytes and divide by sector size.
+    bpb->tot_sec_32   = (opt->device_size * 1024 * 1024) / bpb->bytes_per_sec;
 
     return bpb;
 }
@@ -104,7 +102,7 @@ PRIVATE ebr_t* init_ebr(bpb_t *bpb)
     ebr->reserved1   = 0;
     ebr->boot_sig    = 0x29;
     ebr->vol_id      = 0xDEADBEEF;
-    strncpy(ebr->vol_lab, "NO NAME    ", 11);
+    strncpy(ebr->vol_lab, "FATNESS    ", 11);
     strncpy(ebr->fil_sys_type, "FAT32   ", 8);
 
     return ebr;
@@ -152,8 +150,6 @@ PRIVATE fat_t* init_fat(bpb_t *bpb)
     fat_t *fat = (fat_t*) calloc((bpb->tot_sec_32 / 2), sizeof(fat_t));
     if (!fat) error(FATAL, 0, "Could not allocate space for the FAT.\n");
 
-    /* memset(fat, FREE, sizeof(fat_t) * (bpb->tot_sec_32 / 2)); */
-
     return fat;
 }
 
@@ -164,6 +160,7 @@ PRIVATE fat_t* init_fat(bpb_t *bpb)
  * vol_t provides information on the volume, such as:
  * the LBA of the FAT, the LBA of the first cluster,
  * and other fun things.
+ *
  */
 PRIVATE vol_t* init_vol(bpb_t *bpb, ebr_t *ebr)
 {
@@ -185,6 +182,7 @@ PRIVATE vol_t* init_vol(bpb_t *bpb, ebr_t *ebr)
 
 /****************************************************************
  * Write the BIOS Parameter Block to the volume.
+ * Total size: 36 bytes
  */
 PRIVATE void write_bpb(FILE *f, bpb_t *bpb)
 {
@@ -215,7 +213,8 @@ PRIVATE void write_bpb(FILE *f, bpb_t *bpb)
 
 
 /****************************************************************
- * Write the Extended Boot Record to the volume. 
+ * Write the Extended Boot Record to the volume.
+ * Total size: 476 bytes
  */
 PRIVATE void write_ebr(FILE *f, ebr_t *ebr)
 {
@@ -260,6 +259,7 @@ u32_t read_sector_sig(FILE *f)
 
 /****************************************************************
  * Write the FSInfo sector to the volume.
+ * Total size: 512 bytes
  */
 PRIVATE void write_fsinfo(FILE *f, fsinfo_t *fsinfo)
 {
@@ -337,8 +337,6 @@ void create_fs(options_t *opt)
     write_fsinfo(volume, fsinfo);
     write_rsvd(volume, bpb);
     write_fat(volume, bpb, fat);
-
-
     fclose(volume);
 
     free(bpb);
