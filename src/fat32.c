@@ -1,23 +1,24 @@
 /****************************************************************
- * FAT32 driver for volume creation.
+ * FAT32 library functions
  *
  * Author : Matt Godshall
  * Date   : 2011 Nov 12 21:06:27
  *
  * This file is part of getfat.
  *
- * getfat is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * getfat is free software: you can redistribute it and/or modify it under the
+ * terms of the GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option) any later
+ * version.
  *
- * getfat is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * getfat is distributed in the hope that it will be useful, but WITHOUT ANY
+ * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+ * details.
  *
- * You should have received a copy of the GNU General Public License
- * along with getfat.  If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU General Public License along with
+ * getfat. If not, see <http://www.gnu.org/licenses/>.
+ *
  */
 
 #include <stdio.h>
@@ -36,14 +37,17 @@ PRIVATE u32_t lookup_cluster(u32_t cluster)
     return 0;
 }
 
+
 /****************************************************************
  * Allocate and initialize a BIOS Parameter Block.
  */
 PRIVATE bpb_t* init_bpb(options_t *opt)
 {
+    printf("%s\n", __FUNCTION__);
+
     bpb_t *bpb = (bpb_t *) malloc(sizeof(bpb_t));
 
-    if (!bpb) error(FATAL, 0, "Could not allocate space for BPB.\n");
+    if (!bpb) return NULL;
 
     bpb->bs_jmp_boot[0] = 0xEB;
     bpb->bs_jmp_boot[1] = 0x00;
@@ -60,10 +64,10 @@ PRIVATE bpb_t* init_bpb(options_t *opt)
 
     // Variable
     bpb->bytes_per_sec       = opt->sector_size;
-    bpb->sectors_per_cluster = 2;
+    bpb->sectors_per_cluster = opt->cluster_size;
 
     // Mostly fixed.
-    bpb->rsvd_sec_cnt = 32;
+    bpb->rsvd_sec_cnt = opt->reserved_sectors;
     bpb->num_fats     = 2;
     bpb->root_ent_cnt = 0;
     bpb->tot_sec_16   = 0;
@@ -75,6 +79,7 @@ PRIVATE bpb_t* init_bpb(options_t *opt)
 
     // Convert device size to bytes and divide by sector size.
     bpb->tot_sec_32   = (opt->device_size * 1024 * 1024) / bpb->bytes_per_sec;
+    printf("\ttotal sectors: %d\n", bpb->tot_sec_32);
 
     return bpb;
 }
@@ -83,13 +88,18 @@ PRIVATE bpb_t* init_bpb(options_t *opt)
 /****************************************************************
  * Allocate and initialize the Extended Boot Record.
  */
-PRIVATE ebr_t* init_ebr(bpb_t *bpb)
+PRIVATE ebr_t* init_ebr(vol_t *volume_info)
 {
+    printf("%s\n", __FUNCTION__);
+
+    int clusters = volume_info->bpb->tot_sec_32 /
+        volume_info->bpb->sectors_per_cluster;
     ebr_t *ebr = (ebr_t *) malloc(sizeof(ebr_t));
 
-    if (!ebr) error(FATAL, 0, "Could not allocate space for EBR.\n");
+    if (!ebr) return NULL;
 
-    ebr->fat_sz_32   = bpb->tot_sec_32;
+    // XXX Should be the number of sectors the FAT takes up.
+    ebr->fat_sz_32   = (clusters * 4) / volume_info->bpb->bytes_per_sec;
     ebr->ext_flags   = 0;
     ebr->fs_ver      = 0;
     ebr->root_clus   = 2;
@@ -112,11 +122,13 @@ PRIVATE ebr_t* init_ebr(bpb_t *bpb)
 /****************************************************************
  * Allocate and initialize the File System Info Block.
  */
-PRIVATE fsinfo_t* init_fsinfo(bpb_t *bpb)
+PRIVATE fsinfo_t* init_fsinfo(vol_t *volume_info)
 {
+    printf("%s\n", __FUNCTION__);
+
     fsinfo_t *fsinfo = (fsinfo_t *) malloc(sizeof(fsinfo_t));
 
-    if (!fsinfo) error(FATAL, 0, "Could not allocate space for FSINFO.\n");
+    if (!fsinfo) return NULL;
 
     fsinfo->sector_sig[0] = 'R';
     fsinfo->sector_sig[1] = 'R';
@@ -145,10 +157,23 @@ PRIVATE fsinfo_t* init_fsinfo(bpb_t *bpb)
 /****************************************************************
  * Allocate and initialize the file allocation table (FAT).
  */
-PRIVATE fat_t* init_fat(bpb_t *bpb)
+PRIVATE fat_t* init_fat(vol_t *volume_info)
 {
-    fat_t *fat = (fat_t*) calloc((bpb->tot_sec_32 / 2), sizeof(fat_t));
-    if (!fat) error(FATAL, 0, "Could not allocate space for the FAT.\n");
+    printf("%s\n", __FUNCTION__);
+    printf("\ttotal clusters: %d\n",
+        (volume_info->bpb->tot_sec_32 / volume_info->bpb->sectors_per_cluster));
+
+    fat_t *fat = (fat_t*) calloc(
+        (volume_info->bpb->tot_sec_32 / volume_info->bpb->sectors_per_cluster),
+        sizeof(fat_t));
+
+    if (!fat) {
+        fprintf(stderr, "\tfat not allocated.\n");
+        return NULL;
+    }
+
+    /* Mark end of cluster. */
+    fat[0] = 0xFFFFFFF8;
 
     return fat;
 }
@@ -162,21 +187,20 @@ PRIVATE fat_t* init_fat(bpb_t *bpb)
  * and other fun things.
  *
  */
-PRIVATE vol_t* init_vol(bpb_t *bpb, ebr_t *ebr)
+PRIVATE vol_t* calc_volume_info(vol_t* volume_info)
 {
-    vol_t *vol = (vol_t*) malloc(sizeof(vol_t));
-
-    if (!vol) error(FATAL, 0, "Could not allocate space for Volume Info.\n");
-    
+    printf("%s\n", __FUNCTION__);
     static const u8_t PARTITION_BEGIN_LBA = 0;
 
-    vol->fat_begin_lba = PARTITION_BEGIN_LBA + bpb->rsvd_sec_cnt;
-    vol->cluster_begin_lba = PARTITION_BEGIN_LBA + bpb->rsvd_sec_cnt +
-        (bpb->num_fats * bpb->tot_sec_32);
-    vol->sectors_per_cluster = bpb->sectors_per_cluster;
-    vol->root_dir_first_cluster = ebr->root_clus;
+    volume_info->fat_begin_lba = PARTITION_BEGIN_LBA +
+        volume_info->bpb->rsvd_sec_cnt;
+    volume_info->cluster_begin_lba = PARTITION_BEGIN_LBA +
+        volume_info->bpb->rsvd_sec_cnt +
+        (volume_info->bpb->num_fats * volume_info->bpb->tot_sec_32);
+    volume_info->sectors_per_cluster = volume_info->bpb->sectors_per_cluster;
+    volume_info->root_dir_first_cluster = volume_info->ebr->root_clus;
 
-    return vol;
+    return volume_info;
 }
 
 
@@ -184,31 +208,28 @@ PRIVATE vol_t* init_vol(bpb_t *bpb, ebr_t *ebr)
  * Write the BIOS Parameter Block to the volume.
  * Total size: 36 bytes
  */
-PRIVATE void write_bpb(FILE *f, bpb_t *bpb)
+PRIVATE void write_bpb(vol_t *volume_info)
 {
-    printf("write_bpb\n");
+    printf("%s\n", __FUNCTION__);
     long int tell = 0;
-    tell = ftell(f);
-    printf("\tbefore seek: %ld\n", tell);
-    fseek(f, 0, SEEK_SET);
-    tell = ftell(f);
+    fseek(volume_info->disk, 0, SEEK_SET);
+    tell = ftell(volume_info->disk);
     printf("\tafter seek: %ld\n", tell);
 
-
-    fwrite(bpb->bs_jmp_boot, sizeof(u8_t), 3, f);
-    fwrite(bpb->bs_oem_name, sizeof(u8_t), 8, f);
-    fwrite(&(bpb->bytes_per_sec), sizeof(u16_t), 1, f);
-    fwrite(&(bpb->sectors_per_cluster), sizeof(u8_t), 1, f);
-    fwrite(&(bpb->rsvd_sec_cnt), sizeof(u16_t), 1, f);
-    fwrite(&(bpb->num_fats), sizeof(u8_t), 1, f);
-    fwrite(&(bpb->root_ent_cnt), sizeof(u16_t), 1, f);
-    fwrite(&(bpb->tot_sec_16), sizeof(u16_t), 1, f);
-    fwrite(&(bpb->media), sizeof(u8_t), 1, f);
-    fwrite(&(bpb->fat_sz_16), sizeof(u16_t), 1, f);
-    fwrite(&(bpb->sec_per_trk), sizeof(u16_t), 1, f);
-    fwrite(&(bpb->num_heads), sizeof(u16_t), 1, f);
-    fwrite(&(bpb->hidd_sec), sizeof(u32_t), 1, f);
-    fwrite(&(bpb->tot_sec_32), sizeof(u32_t), 1, f);
+    fwrite(volume_info->bpb->bs_jmp_boot, sizeof(u8_t), 3, volume_info->disk);
+    fwrite(volume_info->bpb->bs_oem_name, sizeof(u8_t), 8, volume_info->disk);
+    fwrite(&(volume_info->bpb->bytes_per_sec), sizeof(u16_t), 1, volume_info->disk);
+    fwrite(&(volume_info->bpb->sectors_per_cluster), sizeof(u8_t), 1, volume_info->disk);
+    fwrite(&(volume_info->bpb->rsvd_sec_cnt), sizeof(u16_t), 1, volume_info->disk);
+    fwrite(&(volume_info->bpb->num_fats), sizeof(u8_t), 1, volume_info->disk);
+    fwrite(&(volume_info->bpb->root_ent_cnt), sizeof(u16_t), 1, volume_info->disk);
+    fwrite(&(volume_info->bpb->tot_sec_16), sizeof(u16_t), 1, volume_info->disk);
+    fwrite(&(volume_info->bpb->media), sizeof(u8_t), 1, volume_info->disk);
+    fwrite(&(volume_info->bpb->fat_sz_16), sizeof(u16_t), 1, volume_info->disk);
+    fwrite(&(volume_info->bpb->sec_per_trk), sizeof(u16_t), 1, volume_info->disk);
+    fwrite(&(volume_info->bpb->num_heads), sizeof(u16_t), 1, volume_info->disk);
+    fwrite(&(volume_info->bpb->hidd_sec), sizeof(u32_t), 1, volume_info->disk);
+    fwrite(&(volume_info->bpb->tot_sec_32), sizeof(u32_t), 1, volume_info->disk);
 }
 
 
@@ -216,44 +237,33 @@ PRIVATE void write_bpb(FILE *f, bpb_t *bpb)
  * Write the Extended Boot Record to the volume.
  * Total size: 476 bytes
  */
-PRIVATE void write_ebr(FILE *f, ebr_t *ebr)
+PRIVATE void write_ebr(vol_t *volume_info)
 {
-    printf("write_ebr\n");
     long int tell = 0;
-    tell = ftell(f);
-    printf("\tbefore seek: %ld\n", tell);
-    fseek(f, 36, SEEK_SET);
-    tell = ftell(f);
+    printf("%s\n", __FUNCTION__);
+    fseek(volume_info->disk, 36, SEEK_SET);
+    tell = ftell(volume_info->disk);
     printf("\tafter seek: %ld\n", tell);
 
-    fseek(f, 36, SEEK_SET);
-    fwrite(&(ebr->fat_sz_32), sizeof(u32_t), 1, f);
-    fwrite(&(ebr->ext_flags), sizeof(u16_t), 1, f);
-    fwrite(&(ebr->fs_ver), sizeof(u16_t), 1, f);
-    fwrite(&(ebr->root_clus), sizeof(u32_t), 1, f);
-    fwrite(&(ebr->fs_info), sizeof(u16_t), 1, f);
-    fwrite(&(ebr->bk_boot_sec), sizeof(u16_t), 1, f);
-    fwrite(ebr->reserved, sizeof(u8_t), 12, f);
-    fwrite(&(ebr->drv_num), sizeof(u8_t), 1, f);
-    fwrite(&(ebr->reserved1), sizeof(u8_t), 1, f);
-    fwrite(&(ebr->boot_sig), sizeof(u8_t), 1, f);
-    fwrite(&(ebr->vol_id), sizeof(u32_t), 1, f);
-    fwrite(ebr->vol_lab, sizeof(u8_t), 11, f);
-    fwrite(ebr->fil_sys_type, sizeof(u8_t), 8, f);
+    fseek(volume_info->disk, 36, SEEK_SET);
+    fwrite(&(volume_info->ebr->fat_sz_32), sizeof(u32_t), 1, volume_info->disk);
+    fwrite(&(volume_info->ebr->ext_flags), sizeof(u16_t), 1, volume_info->disk);
+    fwrite(&(volume_info->ebr->fs_ver), sizeof(u16_t), 1, volume_info->disk);
+    fwrite(&(volume_info->ebr->root_clus), sizeof(u32_t), 1, volume_info->disk);
+    fwrite(&(volume_info->ebr->fs_info), sizeof(u16_t), 1, volume_info->disk);
+    fwrite(&(volume_info->ebr->bk_boot_sec), sizeof(u16_t), 1, volume_info->disk);
+    fwrite(volume_info->ebr->reserved, sizeof(u8_t), 12, volume_info->disk);
+    fwrite(&(volume_info->ebr->drv_num), sizeof(u8_t), 1, volume_info->disk);
+    fwrite(&(volume_info->ebr->reserved1), sizeof(u8_t), 1, volume_info->disk);
+    fwrite(&(volume_info->ebr->boot_sig), sizeof(u8_t), 1, volume_info->disk);
+    fwrite(&(volume_info->ebr->vol_id), sizeof(u32_t), 1, volume_info->disk);
+    fwrite(volume_info->ebr->vol_lab, sizeof(u8_t), 11, volume_info->disk);
+    fwrite(volume_info->ebr->fil_sys_type, sizeof(u8_t), 8, volume_info->disk);
 
     /* End of sector signature. */
-    fseek(f, 510, SEEK_SET);
-    fputc(0x55, f);
-    fputc(0xAA, f);
-}
-
-
-u32_t read_sector_sig(FILE *f)
-{
-    u32_t sector_sig = 0;
-    fseek(f, 508, SEEK_SET);
-    fread(&sector_sig, sizeof(u32_t), 1, f);
-    return sector_sig;
+    fseek(volume_info->disk, 510, SEEK_SET);
+    fputc(0x55, volume_info->disk);
+    fputc(0xAA, volume_info->disk);
 }
 
 
@@ -261,112 +271,256 @@ u32_t read_sector_sig(FILE *f)
  * Write the FSInfo sector to the volume.
  * Total size: 512 bytes
  */
-PRIVATE void write_fsinfo(FILE *f, fsinfo_t *fsinfo)
+PRIVATE void write_fsinfo(vol_t *volume_info)
 {
-    printf("write_fsinfo\n");
+    printf("%s\n", __FUNCTION__);
     long int tell = 0;
-    tell = ftell(f);
-    printf("\tbefore seek: %ld\n", tell);
-    fseek(f, 512, SEEK_SET);
-    tell = ftell(f);
+    fseek(volume_info->disk, 512, SEEK_SET);
+    tell = ftell(volume_info->disk);
     printf("\tafter seek: %ld\n", tell);
 
-    fwrite(fsinfo->sector_sig, sizeof(u8_t), 4, f);
+    fwrite(volume_info->fsinfo->sector_sig, sizeof(u8_t), 4, volume_info->disk);
 
     int i;
     for (i = 0; i < 480; ++i)
-        fputc(0x00, f); 
+        fputc(0x00, volume_info->disk);
 
-    fwrite(fsinfo->sector_sig_2, sizeof(u8_t), 4, f);
-    fwrite(&(fsinfo->free_clusters), sizeof(u32_t), 1, f);
-    fwrite(&(fsinfo->rec_alloc_clus), sizeof(u32_t), 1, f);
-    fwrite(fsinfo->reserved, sizeof(u8_t), 12, f);
-    fwrite(fsinfo->sector_sig_3, sizeof(u8_t), 4, f);
+    fwrite(volume_info->fsinfo->sector_sig_2, sizeof(u8_t), 4, volume_info->disk);
+    fwrite(&(volume_info->fsinfo->free_clusters), sizeof(u32_t), 1, volume_info->disk);
+    fwrite(&(volume_info->fsinfo->rec_alloc_clus), sizeof(u32_t), 1, volume_info->disk);
+    fwrite(volume_info->fsinfo->reserved, sizeof(u8_t), 12, volume_info->disk);
+    fwrite(volume_info->fsinfo->sector_sig_3, sizeof(u8_t), 4, volume_info->disk);
 }
 
 
 /****************************************************************
  * Write reserved sectors to the volume.
  */
-PRIVATE void write_rsvd(FILE *f, bpb_t *bpb)
+PRIVATE void write_rsvd(vol_t *volume_info)
 {
-    u16_t rsvd_sec_cnt = bpb->rsvd_sec_cnt;
+    printf("%s\n", __FUNCTION__);
+    long int tell = 0;
+    fseek(volume_info->disk, 1024, SEEK_SET);
+    tell = ftell(volume_info->disk);
+    printf("\tafter seek: %ld\n", tell);
+
+    u32_t pad = (volume_info->bpb->rsvd_sec_cnt *
+         volume_info->bpb->bytes_per_sec) - 1024;
+    printf("\tpad: %u\n", pad);
 
     /* Write blank sectors to volume. */
-    int i, j;
-    for (i = 0; i < rsvd_sec_cnt; ++i) {
-        for (j = 0; j < bpb->bytes_per_sec; ++j) {
-            fputc(0x00, f);
-        }
-    }
+    int i;
+    for (i = 0; i < pad; ++i)
+        fputc(0x00, volume_info->disk);
 }
 
 
 /****************************************************************
  * Write the File Allocation Table (FAT) to the volume.
  */
-PRIVATE void write_fat(FILE *f, bpb_t *bpb, fat_t *fat)
+PRIVATE void write_fat(vol_t *volume_info)
 {
+    printf("%s\n", __FUNCTION__);
+    long int tell = 0;
+    fseek(volume_info->disk, volume_info->bpb->rsvd_sec_cnt *
+        volume_info->bpb->bytes_per_sec, SEEK_SET);
+    tell = ftell(volume_info->disk);
+    printf("\tafter seek: %ld\n", tell);
+
+    volume_info->fat[(volume_info->bpb->tot_sec_32 / volume_info->bpb->sectors_per_cluster) - 1] = 0xDEADCAFE;
+
     /* Jump to the first non-reserved sector and write the FAT. */
-    fseek(f, bpb->rsvd_sec_cnt * bpb->bytes_per_sec, SEEK_SET);
-    fwrite(fat, bpb->tot_sec_32 / 2, 1, f);
+    fwrite(volume_info->fat, sizeof(u32_t),
+        volume_info->bpb->tot_sec_32 / volume_info->bpb->sectors_per_cluster,
+        volume_info->disk);
 
     /* Write the back-up copy of the FAT. */
-    fwrite(fat, bpb->tot_sec_32 / 2, 1, f);
+    fwrite(volume_info->fat, sizeof(u32_t),
+        volume_info->bpb->tot_sec_32 / volume_info->bpb->sectors_per_cluster,
+        volume_info->disk);
 }
 
 
 /****************************************************************
  * Perform all necessary actions to create a new FAT32 volume.
  */
-void create_fs(options_t *opt)
+vol_t* create_fs(options_t *opt)
 {
-    bpb_t *bpb       = init_bpb(opt);
-    ebr_t *ebr       = init_ebr(bpb);
-    fsinfo_t *fsinfo = init_fsinfo(bpb);
-    fat_t *fat       = init_fat(bpb);
-    vol_t *vol       = init_vol(bpb, ebr);
+    printf("%s\n", __FUNCTION__);
 
-    FILE *volume = fopen(opt->file_name, "w+");
+    vol_t *volume_info = (vol_t*) malloc(sizeof(vol_t));
+    if (!volume_info)
+        return NULL;
+    volume_info->bpb    = init_bpb(opt);
+    volume_info->ebr    = init_ebr(volume_info);
+    volume_info->fsinfo = init_fsinfo(volume_info);
+    volume_info->fat    = init_fat(volume_info);
+    volume_info         = calc_volume_info(volume_info);
 
-    if (!volume)
-        error(FATAL, 0, "An error occured opening the volume for writing.\n");
+    volume_info->disk = fopen(opt->file_name, "r+");
+    if (!volume_info->disk)
+        return free_vol(volume_info);
 
-    write_bpb(volume, bpb);
-    write_ebr(volume, ebr);
-    write_fsinfo(volume, fsinfo);
-    write_rsvd(volume, bpb);
-    write_fat(volume, bpb, fat);
-    fclose(volume);
+    fseek(volume_info->disk, 0, SEEK_SET);
 
-    free(bpb);
-    bpb = NULL;
-    free(ebr);
-    ebr = NULL;
-    free(fsinfo);
-    fsinfo = NULL;
-    free(fat);
-    fat = NULL;
-    free(vol);
-    vol = NULL;
+    write_bpb(volume_info);
+    write_ebr(volume_info);
+    write_fsinfo(volume_info);
+    write_rsvd(volume_info);
+    write_fat(volume_info);
+
+    return volume_info;
 }
 
+
+PRIVATE bpb_t* read_bpb(vol_t *volume_info)
+{
+    printf("%s\n", __FUNCTION__);
+
+    fseek(volume_info->disk, 0, SEEK_SET);
+
+    bpb_t *bpb = (bpb_t *) malloc(sizeof(bpb_t));
+    if (!bpb) return NULL;
+
+    if (fread(bpb, sizeof(bpb_t), 1, volume_info->disk) < 1) {
+        free(bpb);
+        bpb = NULL;
+    }
+
+    return bpb;
+}
+
+
+PRIVATE ebr_t* read_ebr(vol_t *volume_info)
+{
+    printf("%s\n", __FUNCTION__);
+
+    fseek(volume_info->disk, 36, SEEK_SET);
+
+    ebr_t *ebr = (ebr_t *) malloc(sizeof(ebr_t));
+    if (!ebr) return NULL;
+
+    if (fread(ebr, sizeof(ebr_t), 1, volume_info->disk) < 1) {
+        free(ebr);
+        ebr = NULL;
+    }
+
+    return ebr;
+}
+
+
+PRIVATE fsinfo_t* read_fsinfo(vol_t *volume_info)
+{
+    printf("%s\n", __FUNCTION__);
+
+    fseek(volume_info->disk, 992, SEEK_SET);
+
+    fsinfo_t *fsinfo = (fsinfo_t *) malloc(sizeof(fsinfo_t));
+    if (!fsinfo) return NULL;
+
+    if (fread(fsinfo, sizeof(fsinfo_t), 1, volume_info->disk) < 1) {
+        free(fsinfo);
+        fsinfo = NULL;
+    }
+
+    return fsinfo;
+}
+
+
+fat_t* read_fat(vol_t *volume_info)
+{
+    int clusters = volume_info->bpb->tot_sec_32 /
+        volume_info->bpb->sectors_per_cluster;
+    fseek(volume_info->disk,
+        (volume_info->bpb->rsvd_sec_cnt *
+         volume_info->bpb->bytes_per_sec),
+        SEEK_SET);
+    fread(volume_info->fat, sizeof(u32_t), clusters, volume_info->disk);
+    fseek(volume_info->disk, clusters, SEEK_CUR);
+
+    return volume_info->fat;
+}
+
+void hex_dump_fat(vol_t *volume_info)
+{
+    int i;
+    int clusters =
+        volume_info->bpb->tot_sec_32 / volume_info->bpb->sectors_per_cluster;
+
+    printf("%s\n", __FUNCTION__);
+
+    printf("%08x: ", 0);
+    for (i = 0; i < clusters; ++i) {
+        printf("%08x ", volume_info->fat[i]);
+        if ((i + 1) % 16 == 0 && ((i + 1) < clusters)) {
+            printf("\n");
+            printf("%08x: ", (i + 1));
+        }
+    }
+    printf("\n");
+    printf("\tclusters: %d\n", clusters);
+}
 
 /****************************************************************
  * Read information (BPB, EBR, FS INFO, FAT) from a FAT32 volume.
  *
- * XXX Debugging function.
  */
-void read_fs(options_t *opt)
+vol_t* read_fs(options_t *opt)
 {
-    FILE *volume = fopen(opt->file_name, "r+");
-    printf("read_fs\n");
-    printf("\tboot signature: %08x\n", read_sector_sig(volume));
+    printf("%s\n", __FUNCTION__);
 
-    /*
-    bpb_t *bpb = read_bpb(volume);
-    ebr_t *ebr = read_ebr(volume);
-    fsinfo_t *fsinfo = read_fsinfo(volume);
-    fat_t *fat = read_fat(volume);
-    */
+
+    vol_t *volume_info = (vol_t *) malloc(sizeof(vol_t));
+    if (!volume_info) return NULL;
+
+    volume_info->disk = fopen(opt->file_name, "r+");
+    if (volume_info->disk == NULL)
+        return free_vol(volume_info);
+
+    volume_info->bpb = read_bpb(volume_info);
+    volume_info->ebr = read_ebr(volume_info);
+    volume_info->fsinfo = read_fsinfo(volume_info);
+    volume_info->fat = init_fat(volume_info);
+    volume_info->fat = read_fat(volume_info);
+    volume_info = calc_volume_info(volume_info);
+
+    printf("FAT\n");
+    hex_dump_fat(volume_info);
+
+    /* Print BPB */
+    printf("BPB\n");
+    printf("\tbs_jmp_boot: %02x %02x %02x\n", volume_info->bpb->bs_jmp_boot[0],
+        volume_info->bpb->bs_jmp_boot[1], volume_info->bpb->bs_jmp_boot[2]);
+    printf("\tbs_oem_name: %s\n", volume_info->bpb->bs_oem_name);
+    printf("\tbytes_per_sec: %d\n", volume_info->bpb->bytes_per_sec);
+    printf("\tsectors_per_cluster: %d\n",
+        volume_info->bpb->sectors_per_cluster);
+    printf("\trsvd_sec_cnt: %d\n", volume_info->bpb->rsvd_sec_cnt);
+    printf("\tnum_fats: %d\n", volume_info->bpb->num_fats);
+    printf("\troot_ent_cnt: %d\n", volume_info->bpb->root_ent_cnt);
+    printf("\ttot_sec_16: %d\n", volume_info->bpb->tot_sec_16);
+    printf("\tmedia: %02x\n", volume_info->bpb->media);
+    printf("\tfat_sz_16: %04x\n", volume_info->bpb->fat_sz_16);
+    printf("\tsec_per_trk: %04x\n", volume_info->bpb->sec_per_trk);
+    printf("\tnum_heads: %04x\n", volume_info->bpb->num_heads);
+    printf("\thidd_sec: %08x\n", volume_info->bpb->hidd_sec);
+    printf("\ttot_sec_32: %d\n\n", volume_info->bpb->tot_sec_32);
+
+
+    return volume_info;
+}
+
+
+vol_t* free_vol(vol_t *volume_info)
+{
+    if (volume_info != NULL) {
+        fclose(volume_info->disk);
+        free(volume_info->bpb);
+        free(volume_info->ebr);
+        free(volume_info->fsinfo);
+        free(volume_info->fat);
+        free(volume_info);
+    }
+
+    return NULL;
 }
