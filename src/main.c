@@ -1,5 +1,5 @@
 /****************************************************************
- * Driver for getfat.
+ * Volume formatter for getfat utilities.
  *
  * Author: Matt Godshall <lifeinhex@gmail.com>
  * Date  : 06-25-2012
@@ -30,26 +30,32 @@
 
 options_t* parse_args(int, char**);
 void display_help();
+void find_first_file(vol_t *);
 
 
 int main(int argc, char **argv)
 {
+    vol_t *volume_info = NULL;
     options_t *args;
     args = parse_args(argc, argv);
     if (!args) return 1;
 
-    if (args->create && args->file_name)
-        create_fs(args);
-    else if (args->read && args->file_name)
-        read_fs(args);
-    else
+    if (args->help)
+        display_help();
+    else if (args->create && args->file_name)
+        volume_info = create_fs(args);
+    else if (args->read && args->file_name) {
+        volume_info = read_fs(args);
+        find_first_file(volume_info);
+    } else
         display_help();
 
     free(args->file_name);
     args->file_name = NULL;
-
     free(args);
     args = NULL;
+
+    free_vol(volume_info);
 
     return 0;
 }
@@ -64,44 +70,67 @@ options_t* parse_args(int argc, char **argv)
     if (!args) return NULL;
 
     args->device_size = 0;
+    args->cluster_size = 4;
+    args->reserved_sectors = 2;
     args->sector_size = 512;
     args->file_name = NULL;
     args->create = 0;
     args->read = 0;
+    args->help = 0;
     
     int i;
     for (i = 1; i < argc; ++i) {
         char *str = argv[i];
         
+        /* Strip hyphens */
         if (*str == '-')
             ++str;
         
-        /* Parse device_size. */
+        /* Device Size */
         if (!strncmp("ds", str, 2)) {
             str += 2;
             args->device_size = atoi(str);
 
+        /* Help */
         } else if (!strncmp("h", str, 1)) {
-            display_help();
+            args->help = 1;
 
+        /* Create */
         } else if (!strncmp("c", str, 1)) {
             args->create = 1;
 
+        /* Read */
         } else if (!strncmp("r", str, 1)) {
             args->read = 1;
 
+        /* Sector Size */
         } else if (!strncmp("ss", str, 2)) {
             str += 2;
             args->sector_size = atoi(str);
 
-        /* TODO Exit if filename is not present. */
+        /* Cluster Size */
+        } else if (!strncmp("cs", str, 2)) {
+            str += 2;
+            args->cluster_size = atoi(str);
+
+        /* Reserved Sectors */
+        } else if (!strncmp("rs", str, 2)) {
+            str += 2;
+            args->reserved_sectors = atoi(str);
+
+        /* Filename */
         } else if (!strncmp("f", str, 1)) {
             u16_t len = strlen(++str) + 1;
-            args->file_name = (char *) malloc(len); 
-            strncpy(args->file_name, str, len);
-
+            /* Check if filename is present. */
+            if (len == 1) {
+                args->help = 1;
+                return args;
+            } else {
+                args->file_name = (char *) malloc(len);
+                strncpy(args->file_name, str, len);
+            }
         } else {
-            display_help();
+            args->help = 1;
             break;
         }
     }
@@ -115,9 +144,57 @@ options_t* parse_args(int argc, char **argv)
  */
 void display_help()
 {
-    fprintf(stdout, "GetFat v0.0.1\n");
+    fprintf(stdout, "GetFat v0.0.1 - a FAT32 volume creator.\n");
+    fprintf(stdout, "getfat -r|-c <options>\n");
     fprintf(stdout, "\t-ds<size>\tspecify device size in megabytes\n");
     fprintf(stdout, "\t-h\t\tdisplay this text\n");
     fprintf(stdout, "\t-c\t\tcreate the volume\n");
+    fprintf(stdout, "\t-r\t\tread the volume\n");
     fprintf(stdout, "\t-f<name>\tread the given file\n");
+    fprintf(stdout, "\t-ss<size>\tsector size\n");
+    fprintf(stdout, "\t-cs<size>\tclusters per sector\n");
+}
+
+void find_first_file(vol_t *volume_info)
+{
+    int i, j;
+
+    int clusters = volume_info->bpb->tot_sec_32 /
+        volume_info->bpb->sectors_per_cluster;
+
+    int fat_size = volume_info->ebr->fat_sz_32 * volume_info->bpb->bytes_per_sec;
+
+    int cluster_size = volume_info->bpb->bytes_per_sec *
+        volume_info->bpb->sectors_per_cluster;
+
+    int first_data_cluster = volume_info->bpb->tot_sec_32 / cluster_size;
+
+    int rsvd_size = volume_info->bpb->rsvd_sec_cnt *
+        volume_info->bpb->bytes_per_sec;
+
+    u8_t *first_bytes = (u8_t*) calloc(64, sizeof(u8_t));
+
+    printf("%s\n", __FUNCTION__);
+    printf("\tskipping to: %08x\n", rsvd_size + fat_size);
+
+    fseek(volume_info->disk, rsvd_size + fat_size, SEEK_SET);
+    fread(first_bytes, sizeof(u8_t), 64, volume_info->disk);
+
+    for (i = 0; i < 64; ++i) {
+        printf("%02x ", first_bytes[i]);
+
+        if ((i + 1) % 16 == 0) {
+            putchar('\t');
+            for (j = (i + 1) - 16; j < i; ++j) {
+                if (isalnum(first_bytes[j])) {
+                    printf("%c ", first_bytes[j]);
+                } else {
+                    printf(". ");
+                }
+            }
+            putchar('\n');
+        }
+    }
+
+    free(first_bytes);
 }
