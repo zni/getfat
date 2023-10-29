@@ -1,10 +1,10 @@
-CC     = gcc
+CC     = clang
 CFLAGS = -Wall -g -c -I include
 
 all: getfat
 
 getfat: src/main.o src/fat32.o
-	mkdir -p ../bin
+	if [ ! -d "bin" ]; then mkdir bin; fi
 	${CC} src/main.o src/fat32.o -o bin/getfat
 
 main.o: src/main.c
