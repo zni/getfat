@@ -120,7 +120,7 @@ options_t* parse_args(int argc, char **argv)
 
         /* Filename */
         } else if (!strncmp("f", str, 1)) {
-            u16_t len = strlen(++str) + 1;
+            uint16_t len = strlen(++str) + 1;
             /* Check if filename is present. */
             if (len == 1) {
                 args->help = 1;
@@ -172,13 +172,13 @@ void find_first_file(vol_t *volume_info)
     int rsvd_size = volume_info->bpb->rsvd_sec_cnt *
         volume_info->bpb->bytes_per_sec;
 
-    u8_t *first_bytes = (u8_t*) calloc(64, sizeof(u8_t));
+    uint8_t *first_bytes = (uint8_t*) calloc(64, sizeof(uint8_t));
 
     printf("%s\n", __FUNCTION__);
     printf("\tskipping to: %08x\n", rsvd_size + fat_size);
 
     fseek(volume_info->disk, rsvd_size + fat_size, SEEK_SET);
-    fread(first_bytes, sizeof(u8_t), 64, volume_info->disk);
+    fread(first_bytes, sizeof(uint8_t), 64, volume_info->disk);
 
     for (i = 0; i < 64; ++i) {
         printf("%02x ", first_bytes[i]);

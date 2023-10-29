@@ -18,7 +18,7 @@ typedef struct _dir {
      * If the file name is shorter than 8 bytes, the unused bytes are
      * filled with spaces (0x20).
      */
-    u8_t name[11];    // 11 bytes
+    uint8_t name[11];    // 11 bytes
 
     /*
      * Attribute byte
@@ -35,32 +35,32 @@ typedef struct _dir {
     attrib_t  attr;
 
     /* Set to 0 on creation, never use again. */
-    u8_t  nt_res; 
+    uint8_t  nt_res; 
 
     /* Millisecond stamp at file creation time. */
-    u8_t  crt_time_tenth;
+    uint8_t  crt_time_tenth;
 
     /* Time file was created. */
-    u16_t crt_time;
+    uint16_t crt_time;
     
     /* Date file was created. */
-    u16_t crt_date;
+    uint16_t crt_date;
 
     /* Last access date. (Set to wrt_date) */
-    u16_t lst_acc_date;
+    uint16_t lst_acc_date;
 
     /* High word of entry's first cluster number. */
-    u16_t fst_clus_hi;
+    uint16_t fst_clus_hi;
 
     /* Time of last write. */
-    u16_t wrt_time;
+    uint16_t wrt_time;
 
     /* Date of last write. */
-    u16_t wrt_date;
+    uint16_t wrt_date;
 
     /* Low word of this entry's first cluster number. */
-    u16_t fst_clus_lo;
+    uint16_t fst_clus_lo;
 
-    u32_t file_size;
+    uint32_t file_size;
 }__attribute__((packed)) dir_t;
 #endif

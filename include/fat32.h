@@ -26,10 +26,11 @@ typedef struct volume_ {
     ebr_t    *ebr;
     fsinfo_t *fsinfo;
     fat_t    *fat;
-    u64_t    fat_begin_lba;
-    u32_t    cluster_begin_lba;
-    u64_t    sectors_per_cluster;
-    u64_t    root_dir_first_cluster;
+
+    uint64_t    fat_begin_lba;
+    uint32_t    cluster_begin_lba;
+    uint64_t    sectors_per_cluster;
+    uint64_t    root_dir_first_cluster;
 } vol_t;
 
 vol_t* create_fs(options_t *);
